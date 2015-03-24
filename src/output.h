@@ -67,7 +67,7 @@ void outstr(const char *, struct output *);
 #ifndef USE_GLIBC_STDIO
 void outcslow(int, struct output *);
 #endif
-void flushall(void);
+void flushallout(void);
 void flushout(struct output *);
 void outfmt(struct output *, const char *, ...)
     __attribute__((__format__(__printf__,2,3)));

@@ -1462,7 +1462,7 @@ showpipe(struct job *jp, struct output *out)
 	for (sp = jp->ps + 1; sp < spend; sp++)
 		outfmt(out, " | %s", sp->cmd);
 	outcslow('\n', out);
-	flushall();
+	flushallout();
 }
 
 

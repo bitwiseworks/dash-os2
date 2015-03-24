@@ -391,7 +391,7 @@ out:
 	 */
 	if (likely(!setjmp(loc.loc)))
 		setjobctl(0);
-	flushall();
+	flushallout();
 	_exit(status);
 	/* NOTREACHED */
 }
