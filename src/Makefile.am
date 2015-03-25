@@ -32,7 +32,7 @@ dash_SOURCES = \
 	show.h system.h trap.h var.h
 dash_LDADD = builtins.o init.o nodes.o signames.o syntax.o
 
-HELPERS = mkinit mksyntax mknodes mksignames
+HELPERS = mkinit$(EXEEXT) mksyntax$(EXEEXT) mknodes$(EXEEXT) mksignames$(EXEEXT)
 
 BUILT_SOURCES = builtins.h nodes.h syntax.h token.h token_vars.h
 CLEANFILES = \
@@ -54,19 +54,19 @@ builtins.def: builtins.def.in $(top_builddir)/config.h
 builtins.c builtins.h: mkbuiltins builtins.def
 	sh $^
 
-init.c: mkinit $(dash_CFILES)
+init.c: mkinit$(EXEEXT) $(dash_CFILES)
 	./$^
 
-nodes.c nodes.h: mknodes nodetypes nodes.c.pat
+nodes.c nodes.h: mknodes$(EXEEXT) nodetypes nodes.c.pat
 	./$^
 
-syntax.c syntax.h: mksyntax
+syntax.c syntax.h: mksyntax$(EXEEXT)
 	./$^
 
-signames.c: mksignames
+signames.c: mksignames$(EXEEXT)
 	./$^
 
-mksyntax: token.h
+mksyntax$(EXEEXT): token.h
 
-$(HELPERS): %: %.c
+$(HELPERS): %$(EXEEXT): %.c
 	$(COMPILE_FOR_BUILD) -o $@ $<
