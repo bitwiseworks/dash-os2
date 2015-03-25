@@ -378,7 +378,7 @@ opentrace(void)
 	scopy("./trace", s);
 #endif /* not_this_way */
 	if (tracefile) {
-#ifndef __KLIBC__
+#if !defined(__KLIBC__) || defined(__INNOTEK_LIBC__)
 		if (!freopen(s, "a", tracefile)) {
 #else
 		if (!(!fclose(tracefile) && (tracefile = fopen(s, "a")))) {
@@ -398,7 +398,7 @@ opentrace(void)
 	if ((flags = fcntl(fileno(tracefile), F_GETFL, 0)) >= 0)
 		fcntl(fileno(tracefile), F_SETFL, flags | O_APPEND);
 #endif
-#ifndef __KLIBC__
+#if !defined(__KLIBC__) || defined(__INNOTEK_LIBC__)
 	setlinebuf(tracefile);
 #endif /* __KLIBC__ */
 	fputs("\nTracing started.\n", tracefile);
