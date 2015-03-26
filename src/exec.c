@@ -175,7 +175,7 @@ shellexec(char **argv, const char *path, int idx)
 STATIC void
 tryexec(char *cmd, char **argv, char **envp)
 {
-	static char *const path_bshell = _PATH_BSHELL;
+	static char *path_bshell = _PATH_BSHELL;
 	char *save_argv0 = NULL;
 
 repeat:
@@ -190,6 +190,12 @@ repeat:
 		save_argv0 = *argv;
 		*argv-- = cmd;
 		*argv = cmd = path_bshell;
+		goto repeat;
+	}
+
+	if (save_argv0 != NULL && (errno == ENOENT || errno == ENOTDIR) &&
+	    path_bshell != arg0) {
+		*argv = cmd = path_bshell = arg0;
 		goto repeat;
 	}
 
