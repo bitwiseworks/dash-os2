@@ -58,11 +58,13 @@ struct cmdentry {
 #define DO_ALTPATH	0x08	/* using alternate path */
 #define DO_ALTBLTIN	0x20	/* %builtin in alt. path */
 
-extern const char *pathopt;	/* set by padvance */
+extern const char *pathopt;	/* set by padvance / padvance_ext */
+
+#define padvance(p, n) padvance_exts(p, n, NULL, NULL)
 
 void shellexec(char **, const char *, int)
     __attribute__((__noreturn__));
-char *padvance(const char **, const char *);
+char *padvance_exts(const char **, const char *, const char * const *, int *);
 int hashcmd(int, char **);
 void find_command(char *, struct cmdentry *, int, const char *);
 struct builtincmd *find_builtin(const char *);

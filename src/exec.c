@@ -76,6 +76,16 @@
 #define ARB 1			/* actual size determined at run time */
 
 
+#if EXE_USE_EXTS
+STATIC const char * const exe_exts[] = { EXE_EXTS_LIST, NULL };
+#define EXE_EXTS_VARS int ext_idx = -1
+#define EXE_EXTS_ARGS exe_exts, &ext_idx
+#else
+#define EXE_EXTS_VARS
+#define EXE_EXTS_ARGS NULL, NULL
+#endif
+
+
 
 struct tblentry {
 	struct tblentry *next;	/* next entry in hash chain */
@@ -111,14 +121,28 @@ shellexec(char **argv, const char *path, int idx)
 	int e;
 	char **envp;
 	int exerrno;
+	EXE_EXTS_VARS;
 
 	envp = environment();
-	if (strchr(argv[0], '/') != NULL) {
+	if (PATH_HAS_SLASH(argv[0])) {
+#if EXE_USE_EXTS
+		path = nullstr;
+		e = ENOENT;
+		while ((cmdname = padvance_exts(&path, argv[0],
+						EXE_EXTS_ARGS)) != NULL) {
+			tryexec(cmdname, argv, envp);
+			if (errno != ENOENT && errno != ENOTDIR)
+				e = errno;
+			stunalloc(cmdname);
+		}
+#else
 		tryexec(argv[0], argv, envp);
 		e = errno;
+#endif
 	} else {
 		e = ENOENT;
-		while ((cmdname = padvance(&path, argv[0])) != NULL) {
+		while ((cmdname = padvance_exts(&path, argv[0],
+						EXE_EXTS_ARGS)) != NULL) {
 			if (--idx < 0 && pathopt == NULL) {
 				tryexec(cmdname, argv, envp);
 				if (errno != ENOENT && errno != ENOTDIR)
@@ -178,12 +202,19 @@ repeat:
  * a percent sign) appears in the path entry then the global variable
  * pathopt will be set to point to it; otherwise pathopt will be set to
  * NULL.
+ *
+ * When exts is not NULL, it must point to an array of extensions to try
+ * before advancing to the next path entry.  In this case ext_idx must be
+ * also not NULL and initially set to -1 (which means the original name
+ * without any extension); padvance_exts will update its value as it
+ * proceeds.
  */
 
 const char *pathopt;
 
 char *
-padvance(const char **path, const char *name)
+padvance_exts(const char **path, const char *name,
+	      const char * const *exts, int *ext_idx)
 {
 	const char *p;
 	char *q;
@@ -193,8 +224,10 @@ padvance(const char **path, const char *name)
 	if (*path == NULL)
 		return NULL;
 	start = *path;
-	for (p = start ; *p && *p != ':' && *p != '%' ; p++);
+	for (p = start ; *p && *p != PATH_SEP && *p != '%' ; p++);
 	len = p - start + strlen(name) + 2;	/* "2" is for '/' and '\0' */
+	if (exts != NULL)
+	    len += EXE_EXTS_MAXLEN;
 	while (stackblocksize() < len)
 		growstackblock();
 	q = stackblock();
@@ -204,15 +237,26 @@ padvance(const char **path, const char *name)
 		*q++ = '/';
 	}
 	strcpy(q, name);
+	if (exts != NULL) {
+		/* Apped the extension and advance to the next one */
+		if (*ext_idx != -1)
+			strcat(q, exts[*ext_idx]);
+		(*ext_idx)++;
+	}
 	pathopt = NULL;
 	if (*p == '%') {
 		pathopt = ++p;
-		while (*p && *p != ':')  p++;
+		while (*p && *p != PATH_SEP)  p++;
 	}
-	if (*p == ':')
-		*path = p + 1;
-	else
-		*path = NULL;
+	if (exts == NULL || exts[*ext_idx] == NULL) {
+		/* Advance path when we're out of exts to try */
+		if (*p == PATH_SEP)
+			*path = p + 1;
+		else
+			*path = NULL;
+		if (exts != NULL)
+			*ext_idx = -1;
+	}
 	return stalloc(len);
 }
 
@@ -293,11 +337,33 @@ find_command(char *name, struct cmdentry *entry, int act, const char *path)
 	int e;
 	int updatetbl;
 	struct builtincmd *bcmd;
+	EXE_EXTS_VARS;
 
 	/* If name contains a slash, don't use PATH or hash table */
-	if (strchr(name, '/') != NULL) {
+	if (PATH_HAS_SLASH(name)) {
 		entry->u.index = -1;
 		if (act & DO_ABS) {
+#if EXE_USE_EXTS
+			e = -1;
+			path = nullstr;
+			while ((fullname = padvance_exts(&path, name,
+							 EXE_EXTS_ARGS)) != NULL) {
+				while ((e = stat64(fullname, &statb)) < 0) {
+#ifdef SYSV
+					if (errno == EINTR)
+						continue;
+#endif
+					break;
+				}
+				stunalloc(fullname);
+				if (e == 0)
+					break;
+			}
+			if (e < 0) {
+				entry->cmdtype = CMDUNKNOWN;
+				return;
+			}
+#else
 			while (stat64(name, &statb) < 0) {
 #ifdef SYSV
 				if (errno == EINTR)
@@ -306,6 +372,7 @@ find_command(char *name, struct cmdentry *entry, int act, const char *path)
 				entry->cmdtype = CMDUNKNOWN;
 				return;
 			}
+#endif
 		}
 		entry->cmdtype = CMDNORMAL;
 		return;
@@ -364,7 +431,7 @@ find_command(char *name, struct cmdentry *entry, int act, const char *path)
 	e = ENOENT;
 	idx = -1;
 loop:
-	while ((fullname = padvance(&path, name)) != NULL) {
+	while ((fullname = padvance_exts(&path, name, EXE_EXTS_ARGS)) != NULL) {
 		stunalloc(fullname);
 		idx++;
 		if (pathopt) {
@@ -381,7 +448,7 @@ loop:
 			}
 		}
 		/* if rehash, don't redo absolute path names */
-		if (fullname[0] == '/' && idx <= prev) {
+		if (PATH_IS_ABS(fullname) && idx <= prev) {
 			if (idx < prev)
 				continue;
 			TRACE(("searchexec \"%s\": no change\n", name));
@@ -530,8 +597,8 @@ changepath(const char *newval)
 	for (;;) {
 		if (*old != *new) {
 			firstchange = idx;
-			if ((*old == '\0' && *new == ':')
-			 || (*old == ':' && *new == '\0'))
+			if ((*old == '\0' && *new == PATH_SEP)
+			 || (*old == PATH_SEP && *new == '\0'))
 				firstchange++;
 			old = new;	/* ignore subsequent differences */
 		}
@@ -539,7 +606,7 @@ changepath(const char *newval)
 			break;
 		if (*new == '%' && bltin < 0 && prefix(new + 1, "builtin"))
 			bltin = idx;
-		if (*new == ':') {
+		if (*new == PATH_SEP) {
 			idx++;
 		}
 		new++, old++;

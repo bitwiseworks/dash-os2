@@ -64,6 +64,26 @@
 #endif
 #endif
 
+#ifdef __OS2__
+#define PATH_SEP ';'
+#define PATH_IS_ABS(path) \
+    ((*(path) == '\\' && (path)[1] == '\\') || \
+     (*(path) == '/' && (path)[1] == '/') || \
+     (((*(path) >= 'A' && *(path) <= 'Z') || \
+       (*(path) >= 'a' && *(path) <= 'z')) && (path)[1] == ':'))
+#define PATH_HAS_SLASH(path) (strpbrk(path, "/\\") != NULL)
+#define EXE_USE_EXTS 1
+#define EXE_EXTS_LIST ".exe", ".cmd", ".bat", ".com", ".btm"
+#define EXE_EXTS_MAXLEN 4
+#else
+#define PATH_SEP ':'
+#define PATH_IS_ABS(path) (*(path) == '/')
+#define PATH_HAS_SLASH(path) (strchr(path, '/') != NULL)
+#define EXE_USE_EXTS 0
+#define EXE_EXTS_LIST
+#define EXE_EXTS_MAXLEN 0
+#endif
+
 typedef void *pointer;
 #ifndef NULL
 #define NULL (void *)0
