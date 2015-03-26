@@ -106,7 +106,7 @@ cdcmd(int argc, char **argv)
 	}
 	if (!dest)
 		dest = nullstr;
-	if (*dest == '/')
+	if (PATH_IS_ABS_OR_ROOT(dest))
 		goto step6;
 	if (*dest == '.') {
 		c = dest[1];
@@ -114,6 +114,9 @@ dotdot:
 		switch (c) {
 		case '\0':
 		case '/':
+#if PATH_USE_BACKSLASH
+		case '\\':
+#endif
 			goto step6;
 		case '.':
 			c = dest[2];
@@ -128,7 +131,7 @@ dotdot:
 		c = *path;
 		p = padvance(&path, dest);
 		if (stat(p, &statb) >= 0 && S_ISDIR(statb.st_mode)) {
-			if (c && c != ':')
+			if (c && c != PATH_SEP)
 				flags |= CD_PRINT;
 docd:
 			if (!docd(p, flags))
@@ -171,6 +174,7 @@ docd(const char *dest, int flags)
 			dest = dir;
 	}
 	err = chdir(dest);
+	TRACE(("chdir(\"%s\") returns %d\n", dest, err));
 	if (err)
 		goto out;
 	setpwd(dir, 1);
@@ -196,35 +200,45 @@ updatepwd(const char *dir)
 
 	cdcomppath = sstrdup(dir);
 	STARTSTACKSTR(new);
-	if (*dir != '/') {
+	if (PATH_IS_REL(cdcomppath)) {
 		if (curdir == nullstr)
 			return 0;
-		new = stputs(curdir, new);
-	}
-	new = makestrspace(strlen(dir) + 2, new);
-	lim = stackblock() + 1;
-	if (*dir != '/') {
-		if (new[-1] != '/')
-			USTPUTC('/', new);
-		if (new > lim && *lim == '/')
-			lim++;
-	} else {
-		USTPUTC('/', new);
-		cdcomppath++;
-		if (dir[1] == '/' && dir[2] != '/') {
-			USTPUTC('/', new);
+#if PATH_USE_DRIVE
+		if (PATH_IS_ROOT(cdcomppath)) {
+			new = stnputs(curdir, PATH_ROOT_COMP_LEN(curdir), new);
 			cdcomppath++;
-			lim++;
+			new = makestrspace(strlen(cdcomppath) + 1, new);
+		} else
+#endif
+		{
+			new = stputs(curdir, new);
+			if (!PATH_IS_SLASH(new[-1]))
+				USTPUTC('/', new);
+			new = makestrspace(strlen(cdcomppath) + 1, new);
 		}
+		lim = stackblock();
+		lim += PATH_ROOT_COMP_LEN(lim);
+	} else {
+		new = stnputs(cdcomppath, PATH_ROOT_COMP_LEN(cdcomppath), new);
+		lim = stackblock();
+		cdcomppath += (new - lim);
+		lim += (new - lim);
+		new = makestrspace(strlen(cdcomppath) + 1, new);
 	}
-	p = strtok(cdcomppath, "/");
+#if PATH_USE_BACKSLASH
+	for (p = stackblock(); p < new; p++) {
+		if (*p == '\\')
+			*p = '/';
+	}
+#endif
+	p = strtok(cdcomppath, PATH_SLASHES);
 	while (p) {
 		switch(*p) {
 		case '.':
 			if (p[1] == '.' && p[2] == '\0') {
 				while (new > lim) {
 					STUNPUTC(new);
-					if (new[-1] == '/')
+					if (PATH_IS_SLASH(new[-1]))
 						break;
 				}
 				break;
@@ -235,7 +249,7 @@ updatepwd(const char *dir)
 			new = stputs(p, new);
 			USTPUTC('/', new);
 		}
-		p = strtok(0, "/");
+		p = strtok(0, PATH_SLASHES);
 	}
 	if (new > lim)
 		STUNPUTC(new);

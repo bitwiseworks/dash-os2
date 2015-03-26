@@ -66,20 +66,44 @@
 
 #ifdef __OS2__
 #define PATH_SEP ';'
+#define PATH_SLASHES "\\/"
+#define PATH_IS_SLASH(ch) ((ch) == '\\' || (ch) == '/')
 #define PATH_USE_BACKSLASH 1
-#define PATH_IS_ABS(path) \
-    ((*(path) == '\\' && (path)[1] == '\\') || \
-     (*(path) == '/' && (path)[1] == '/') || \
-     (((*(path) >= 'A' && *(path) <= 'Z') || \
-       (*(path) >= 'a' && *(path) <= 'z')) && (path)[1] == ':'))
-#define PATH_HAS_SLASH(path) (strpbrk(path, "/\\") != NULL)
+#define PATH_IS_UNC(path) \
+    (PATH_IS_SLASH(*(path)) && PATH_IS_SLASH((path)[1]))
+#define PATH_USE_DRIVE 1
+#define PATH_IS_DRIVE(path) \
+    (((*(path) >= 'A' && *(path) <= 'Z') || \
+      (*(path) >= 'a' && *(path) <= 'z')) && (path)[1] == ':')
+#define PATH_IS_DRIVE_ROOT(path) \
+    (PATH_IS_DRIVE(path) && PATH_IS_SLASH((path)[2]))
+#define PATH_IS_ROOT(path) \
+    (PATH_IS_SLASH(*(path)) && !PATH_IS_SLASH((path)[2]))
+#define PATH_IS_ABS(path) (PATH_IS_UNC(path) || PATH_IS_DRIVE_ROOT(path))
+#define PATH_IS_ABS_OR_ROOT(path) (PATH_IS_ABS(path) || PATH_IS_ROOT(path))
+#define PATH_IS_REL(path) (!PATH_IS_ABS(path))
+#define PATH_ROOT_COMP_LEN(path) \
+    (PATH_IS_UNC(path) ? 2 : \
+     PATH_IS_DRIVE(path) ? (PATH_IS_SLASH((path)[2]) ? 3 : 2) : \
+     PATH_IS_ROOT(path) ? 1: 0)
+#define PATH_HAS_SLASH(path) (strpbrk(path, PATH_SLASHES) != NULL)
 #define EXE_USE_EXTS 1
 #define EXE_EXTS_LIST ".exe", ".cmd", ".bat", ".com", ".btm"
 #define EXE_EXTS_MAXLEN 4
 #else
 #define PATH_SEP ':'
+#define PATH_SLASHES "/"
+#define PATH_IS_SLASH(ch) ((ch) == '/')
 #define PATH_USE_BACKSLASH 0
+#define PATH_IS_UNC(path) (*(path) == '/' && (path)[1] == '/')
+#define PATH_USE_DRIVE 0
+#define PATH_IS_DRIVE(path) 0
+#define PATH_IS_DRIVE_ROOT(path) 0
+#define PATH_IS_ROOT(path) (*(path) == '/')
 #define PATH_IS_ABS(path) (*(path) == '/')
+#define PATH_IS_ABS_OR_ROOT(path) (*(path) == '/')
+#define PATH_IS_REL(path) (*(path) != '/'))
+#define PATH_ROOT_COMP_LEN(path) (*(path) == '/' ? 1 : 0)
 #define PATH_HAS_SLASH(path) (strchr(path, '/') != NULL)
 #define EXE_USE_EXTS 0
 #define EXE_EXTS_LIST
