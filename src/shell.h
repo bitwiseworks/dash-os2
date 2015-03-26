@@ -66,6 +66,7 @@
 
 #ifdef __OS2__
 #define PATH_SEP ';'
+#define PATH_USE_BACKSLASH 1
 #define PATH_IS_ABS(path) \
     ((*(path) == '\\' && (path)[1] == '\\') || \
      (*(path) == '/' && (path)[1] == '/') || \
@@ -77,6 +78,7 @@
 #define EXE_EXTS_MAXLEN 4
 #else
 #define PATH_SEP ':'
+#define PATH_USE_BACKSLASH 0
 #define PATH_IS_ABS(path) (*(path) == '/')
 #define PATH_HAS_SLASH(path) (strchr(path, '/') != NULL)
 #define EXE_USE_EXTS 0

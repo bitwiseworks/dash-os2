@@ -257,6 +257,11 @@ padvance_exts(const char **path, const char *name,
 			strcat(q, exts[*ext_idx]);
 		(*ext_idx)++;
 	}
+#ifdef PATH_USE_BACKSLASH
+	q = stackblock();
+	while ((q = strchr(q, '\\')) != NULL)
+		*q++ = '/';
+#endif
 	pathopt = NULL;
 	if (*p == '%') {
 		pathopt = ++p;
