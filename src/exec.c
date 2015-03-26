@@ -175,7 +175,8 @@ shellexec(char **argv, const char *path, int idx)
 STATIC void
 tryexec(char *cmd, char **argv, char **envp)
 {
-	char *const path_bshell = _PATH_BSHELL;
+	static char *const path_bshell = _PATH_BSHELL;
+	char *save_argv0 = NULL;
 
 repeat:
 #ifdef SYSV
@@ -185,10 +186,17 @@ repeat:
 #else
 	execve(cmd, argv, envp);
 #endif
-	if (cmd != path_bshell && errno == ENOEXEC) {
+	if (errno == ENOEXEC && save_argv0 == NULL) {
+		save_argv0 = *argv;
 		*argv-- = cmd;
 		*argv = cmd = path_bshell;
 		goto repeat;
+	}
+
+	if (save_argv0 != NULL) {
+	    *++argv = save_argv0;
+	    /* Restore ENOEXEC instead of exposing _PATH_BSHELL failure */
+	    errno = ENOEXEC;
 	}
 }
 
