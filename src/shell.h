@@ -110,6 +110,16 @@
 #define EXE_EXTS_MAXLEN 0
 #endif
 
+#ifdef __OS2__
+/* Limit process exit status to 0-255 for better *nix compatibility */
+#ifdef __INNOTEK_LIBC__
+#undef WEXITSTATUS
+#define WEXITSTATUS(x) ((_W_INT(x) >> 8) & 0x000000ff)
+#else
+#error Port me!
+#endif
+#endif
+
 typedef void *pointer;
 #ifndef NULL
 #define NULL (void *)0
