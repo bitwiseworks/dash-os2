@@ -127,6 +127,11 @@ procargs(int argc, char **argv)
 	xargv = argv;
 	login = xargv[0] && xargv[0][0] == '-';
 	arg0 = xargv[0];
+#if PATH_USE_BACKSLASH
+	while ((arg0 = strchr(arg0, '\\')) != NULL)
+		*arg0++ = '/';
+	arg0 = xargv[0];
+#endif
 	if (argc > 0)
 		xargv++;
 	for (i = 0; i < NOPTS; i++)
