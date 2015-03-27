@@ -327,11 +327,12 @@ printentry(struct tblentry *cmdp)
 	int idx;
 	const char *path;
 	char *name;
+	EXE_EXTS_VARS;
 
 	idx = cmdp->param.index;
 	path = pathval();
 	do {
-		name = padvance(&path, cmdp->cmdname);
+		name = padvance_exts(&path, cmdp->cmdname, EXE_EXTS_ARGS);
 		stunalloc(name);
 	} while (--idx >= 0);
 	out1str(name);
@@ -866,11 +867,12 @@ describe_command(out, command, path, verbose)
 	case CMDNORMAL: {
 		int j = entry.u.index;
 		char *p;
+		EXE_EXTS_VARS;
 		if (j == -1) {
 			p = command;
 		} else {
 			do {
-				p = padvance(&path, command);
+				p = padvance_exts(&path, command, EXE_EXTS_ARGS);
 				stunalloc(p);
 			} while (--j >= 0);
 		}
