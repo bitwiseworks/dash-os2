@@ -153,6 +153,7 @@ procargs(int argc, char **argv)
 		if (optlist[i] == 2)
 			optlist[i] = 0;
 #if DEBUG == 2
+	/* Restore debug in case if it was reset by the above for loop */
 	debug = 1;
 #endif
 	/* POSIX 1003.2: first arg after -c cmd is $0, remainder $1... */

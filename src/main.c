@@ -141,7 +141,11 @@ main(int argc, char **argv)
 	}
 	handler = &jmploc;
 #ifdef DEBUG
+#if DEBUG == 2
+	/* Open tracefile early when requested */
+	debug = 1;
 	opentrace();
+#endif
 	trputs("Shell args:  ");  trargs(argv);
 #endif
 	rootpid = getpid();
