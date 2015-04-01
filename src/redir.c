@@ -398,6 +398,17 @@ savefd(int from, int ofd)
 
 	newfd = fcntl(from, F_DUPFD, 10);
 	err = newfd < 0 ? errno : 0;
+#ifdef __INNOTEK_LIBC__
+	/* Work around kLIBC 0.6.6 bug described here:
+	   http://trac.netlabs.org/libc/ticket/344
+	   by converting a misleading EPERM to EBADF */
+	if (err == EPERM) {
+		if (fcntl(from, F_GETFL) == -1 && errno == EBADF)
+		    err = EBADF;
+		else
+		    errno = err;
+	}
+#endif
 	if (err != EBADF) {
 		close(ofd);
 		if (err)
