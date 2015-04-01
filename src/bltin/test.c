@@ -148,7 +148,7 @@ static int isoperand(char **);
 static int newerf(const char *, const char *);
 static int olderf(const char *, const char *);
 static int equalf(const char *, const char *);
-#ifdef HAVE_FACCESSAT
+#if defined(HAVE_FACCESSAT) || defined(__INNOTEK_LIBC__)
 static int test_file_access(const char *, int);
 #else
 static int test_st_mode(const struct stat64 *, int);
@@ -304,7 +304,7 @@ primary(enum token n)
 			return strlen(*t_wp) != 0;
 		case FILTT:
 			return isatty(getn(*t_wp));
-#ifdef HAVE_FACCESSAT
+#if defined(HAVE_FACCESSAT) || defined(__INNOTEK_LIBC__)
 		case FILRD:
 			return test_file_access(*t_wp, R_OK);
 		case FILWR:
@@ -381,7 +381,7 @@ filstat(char *nm, enum token mode)
 		return 0;
 
 	switch (mode) {
-#ifndef HAVE_FACCESSAT
+#if !(defined(HAVE_FACCESSAT) || defined(__INNOTEK_LIBC__))
 	case FILRD:
 		return test_st_mode(&s, R_OK);
 	case FILWR:
@@ -488,10 +488,18 @@ equalf (const char *f1, const char *f2)
 		b1.st_ino == b2.st_ino);
 }
 
-#ifdef HAVE_FACCESSAT
+#if defined(HAVE_FACCESSAT) || defined(__INNOTEK_LIBC__)
 static int test_file_access(const char *path, int mode)
 {
+#ifdef __INNOTEK_LIBC__
+	/* kLIBC doesn't make difference between effective and real user yet
+	   and Unix permission bits may be broken on some executables so fall
+	   back to access() that sorts out all the details for now (note that
+	   this assumes using test_file_access() instead of test_st_mode(). */
+	return !access(path, mode);
+#else
 	return !faccessat(AT_FDCWD, path, mode, AT_EACCESS);
+#endif
 }
 #else	/* HAVE_FACCESSAT */
 /*
