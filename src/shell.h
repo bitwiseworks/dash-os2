@@ -50,6 +50,9 @@
  */
 
 #include <sys/param.h>
+#ifdef __KLIBC__
+#include <InnoTekLIBC/pathrewrite.h>
+#endif
 
 #ifndef JOBS
 #define JOBS 1
@@ -77,9 +80,14 @@
       (*(path) >= 'a' && *(path) <= 'z')) && (path)[1] == ':')
 #define PATH_IS_DRIVE_ROOT(path) \
     (PATH_IS_DRIVE(path) && PATH_IS_SLASH((path)[2]))
+#ifdef __KLIBC__
+#define PATH_IS_REWRITE(path) (__libc_PathRewrite((path), NULL, 0) > 0)
+#else
+#define PATH_IS_REWRITE(path) (0)
+#endif
 #define PATH_IS_ROOT(path) \
     (PATH_IS_SLASH(*(path)) && !PATH_IS_SLASH((path)[2]))
-#define PATH_IS_ABS(path) (PATH_IS_UNC(path) || PATH_IS_DRIVE_ROOT(path))
+#define PATH_IS_ABS(path) (PATH_IS_UNC(path) || PATH_IS_DRIVE_ROOT(path) || PATH_IS_REWRITE(path))
 #define PATH_IS_ABS_OR_ROOT(path) (PATH_IS_ABS(path) || PATH_IS_ROOT(path))
 #define PATH_IS_REL(path) (!PATH_IS_ABS(path))
 #define PATH_ROOT_COMP_LEN(path) \
