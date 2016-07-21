@@ -74,7 +74,12 @@ struct localvar_list {
 MKINIT struct localvar_list *localvar_stack;
 
 const char defpathvar[] =
+#if defined(__OS2__)
+	"PATH=/@unixroot/usr/local/sbin;/@unixroot/usr/local/bin;"
+        "/@unixroot/usr/sbin;/@unixroot/usr/bin";
+#else
 	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+#endif
 #ifdef IFS_BROKEN
 const char defifsvar[] = "IFS= \t\n";
 #else
@@ -96,7 +101,7 @@ struct var varinit[] = {
 #endif
 	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"MAIL\0",	changemail },
 	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"MAILPATH\0",	changemail },
-	{ 0,	VSTRFIXED|VTEXTFIXED,		defpathvar,	changepath },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VPATHLIKE,	defpathvar,	changepath },
 	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS1=$ ",	0 },
 	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS2=> ",	0 },
 	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS4=+ ",	0 },
@@ -116,6 +121,10 @@ STATIC struct var **hashvar(const char *);
 STATIC int vpcmp(const void *, const void *);
 STATIC struct var **findvar(struct var **, const char *);
 
+#ifdef PATH_USE_BACKSLASH
+STATIC int ispathlike(const char *, size_t len);
+#endif
+
 /*
  * Initialize the varable symbol tables and import the environment
  */
@@ -133,6 +142,9 @@ INIT {
 	static char ppid[32] = "PPID=";
 	const char *p;
 	struct stat st1, st2;
+#ifdef PATH_USE_BACKSLASH
+	struct var *v;
+#endif
 
 	initvar();
 	for (envp = environ ; *envp ; envp++) {
@@ -153,6 +165,17 @@ INIT {
 		    st1.st_dev != st2.st_dev || st1.st_ino != st2.st_ino)
 			p = 0;
 	setpwd(p, 0);
+
+#ifdef PATH_USE_BACKSLASH
+	/* Disable modification of PATHLIKE_VARS as the variable can be
+	   marked as VPATHLIKE only once (when it is imported or set for
+	   the first time. */
+	v = getvar("PATHLIKE_VARS");
+	if (v)
+		v->flags |= VREADONLY;
+	else
+		setvar("PATHLIKE_VARS", NULL, VTEXTFIXED|VREADONLY);
+#endif
 }
 
 RESET {
@@ -289,6 +312,10 @@ out_free:
 
 		flags |= vp->flags & ~(VTEXTFIXED|VSTACK|VNOSAVE|VUNSET);
 	} else {
+#ifdef PATH_USE_BACKSLASH
+		if (ispathlike(s, strchrnul(s, '=') - s))
+			flags |= VPATHLIKE;
+#endif
 		if (flags & VNOSET)
 			goto out;
 		if ((flags & (VEXPORT|VREADONLY|VSTRFIXED|VUNSET)) == VUNSET)
@@ -299,13 +326,41 @@ out_free:
 		vp->func = NULL;
 		*vpp = vp;
 	}
+#ifdef PATH_USE_BACKSLASH
+	if ((flags & (VPATHLIKE|VTEXTFIXED)) == (VPATHLIKE|VTEXTFIXED)) {
+		/* We need to modify the string */
+		flags &= ~VTEXTFIXED;
+	}
+#endif
 	if (!(flags & (VTEXTFIXED|VSTACK|VNOSAVE)))
 		s = savestr(s);
+#ifdef PATH_USE_BACKSLASH
+	if (flags & VPATHLIKE) {
+		/* Convert backward slashes to forward ones
+		   when importing from the environment */
+		char *p = endofname(s);
+		while (*++p)
+			if (*p == '\\')
+				*p = '/';
+	}
+#endif
 	vp->text = s;
 	vp->flags = flags;
 
 out:
 	return vp;
+}
+
+
+
+/*
+ * Get the variable entry.  Returns NULL if not found.
+ */
+
+struct var *
+getvar(const char *name)
+{
+	return *findvar(hashvar(name), name);
 }
 
 
@@ -359,10 +414,13 @@ intmax_t lookupvarint(const char *name)
 
 /*
  * Generate a list of variables satisfying the given conditions.
+ * When exec is not 0, special processing is done to prepare
+ * the variables for using in a exec call (currently only used when
+ * PATH_USE_BACKSLASH is set).
  */
 
 char **
-listvars(int on, int off, char ***end)
+listvars(int on, int off, char ***end, int exec)
 {
 	struct var **vpp;
 	struct var *vp;
@@ -378,6 +436,17 @@ listvars(int on, int off, char ***end)
 				if (ep == stackstrend())
 					ep = growstackstr();
 				*ep++ = (char *) vp->text;
+#ifdef PATH_USE_BACKSLASH
+				/* Convert forward slashes to back ones for the
+				   external command. Note that we do it in-place
+				   because exec doesn't return anyway. */
+				if (exec && (vp->flags & VPATHLIKE)) {
+					char *p = (char *) vp->text;
+					while (*++p)
+						if (*p == '/')
+							*p = '\\';
+				}
+#endif
 			}
 	} while (++vpp < vartab + VTABSIZE);
 	if (ep == stackstrend())
@@ -404,7 +473,7 @@ showvars(const char *prefix, int on, int off)
 	const char *sep;
 	char **ep, **epend;
 
-	ep = listvars(on, off, &epend);
+	ep = listvars(on, off, &epend, 0);
 	qsort(ep, epend - ep, sizeof(char *), vpcmp);
 
 	sep = *prefix ? spcstr : prefix;
@@ -710,3 +779,26 @@ findvar(struct var **vpp, const char *name)
 	}
 	return vpp;
 }
+
+#ifdef PATH_USE_BACKSLASH
+STATIC int ispathlike(const char *str, size_t len)
+{
+	/* Get the list of PATH-like variables. Note that PATH does not
+	   need to be on this list because it is pre-defined in varinit
+	   where it is already assigned the VPATHLIKE flag. */
+	const char *pathlike = getenv("PATHLIKE_VARS");
+	const char *s;
+
+	s = pathlike;
+	while (s) {
+		if (strncmp(s, str, len) == 0 &&
+		    (s[len] == ',' || s[len] == '\0'))
+			return 1;
+		s = strchr(s, ',');
+		if (s)
+		  ++s;
+	}
+
+	return 0;
+}
+#endif

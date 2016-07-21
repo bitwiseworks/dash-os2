@@ -50,7 +50,7 @@
 #define VNOFUNC		0x40	/* don't call the callback function */
 #define VNOSET		0x80	/* do not set variable - just readonly test */
 #define VNOSAVE		0x100	/* when text is on the heap before setvareq */
-
+#define VPATHLIKE	0x1000	/* PATH-like variable */
 
 struct var {
 	struct var *next;		/* next entry in hash list */
@@ -143,11 +143,12 @@ struct var *setvar(const char *name, const char *val, int flags);
 intmax_t setvarint(const char *, intmax_t, int);
 struct var *setvareq(char *s, int flags);
 struct strlist;
+struct var *getvar(const char *);
 void listsetvar(struct strlist *, int);
 char *lookupvar(const char *);
 intmax_t lookupvarint(const char *);
-char **listvars(int, int, char ***);
-#define environment() listvars(VEXPORT, VUNSET, 0)
+char **listvars(int, int, char ***, int);
+#define environment() listvars(VEXPORT, VUNSET, 0, 1)
 int showvars(const char *, int, int);
 int exportcmd(int, char **);
 int localcmd(int, char **);
