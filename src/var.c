@@ -783,20 +783,31 @@ findvar(struct var **vpp, const char *name)
 #ifdef PATH_USE_BACKSLASH
 STATIC int ispathlike(const char *str, size_t len)
 {
-	/* Get the list of PATH-like variables. Note that PATH does not
-	   need to be on this list because it is pre-defined in varinit
-	   where it is already assigned the VPATHLIKE flag. */
-	const char *pathlike = getenv("PATHLIKE_VARS");
+	const char *pathlike[] = {
+		/* Well-known PATH-like variables. Note that PATH does not
+		   need to be on this list because it is pre-defined in varinit
+		   where it is already marked with VPATHLIKE. */
+		"TMPDIR,TMP,TEMP,CDPATH,HOME"
+#ifdef __OS2__
+	  	",BEGINLIBPATH,ENDLIBPATH"
+#endif
+		,
+		/* Additional variabes may be defined in the environment */
+		getenv("PATHLIKE_VARS")
+	};
 	const char *s;
+	size_t i;
 
-	s = pathlike;
-	while (s) {
-		if (strncmp(s, str, len) == 0 &&
-		    (s[len] == ',' || s[len] == '\0'))
-			return 1;
-		s = strchr(s, ',');
-		if (s)
-		  ++s;
+	for (i = 0; i < sizeof(pathlike)/sizeof(pathlike[0]); ++i) {
+		s = pathlike[i];
+		while (s) {
+			if (strncmp(s, str, len) == 0 &&
+			    (s[len] == ',' || s[len] == '\0'))
+				return 1;
+			s = strchr(s, ',');
+			if (s)
+				++s;
+		}
 	}
 
 	return 0;
