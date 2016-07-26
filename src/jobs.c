@@ -936,7 +936,8 @@ forkshell(struct job *jp, union node *n, int mode)
 		TRACE(("Fork failed, errno=%d", errno));
 		if (jp)
 			freejob(jp);
-		sh_error("Cannot fork");
+		INTON;
+		sh_error("Cannot fork (%s)", strerror);
 	}
 	if (pid == 0)
 		forkchild(jp, n, mode);
