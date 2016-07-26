@@ -135,19 +135,13 @@ static inline int realeofmark(const char *eofmark)
 union node *
 parsecmd(int interact)
 {
-	int t;
-
 	tokpushback = 0;
+	checkkwd = 0;
+	heredoclist = 0;
 	doprompt = interact;
 	if (doprompt)
 		setprompt(doprompt);
 	needprompt = 0;
-	t = readtoken();
-	if (t == TEOF)
-		return NEOF;
-	if (t == TNL)
-		return NULL;
-	tokpushback++;
 	return list(1);
 }
 
@@ -158,11 +152,27 @@ list(int nlflag)
 	union node *n1, *n2, *n3;
 	int tok;
 
-	checkkwd = CHKNL | CHKKWD | CHKALIAS;
-	if (nlflag == 2 && tokendlist[peektoken()])
-		return NULL;
 	n1 = NULL;
 	for (;;) {
+		switch (peektoken()) {
+		case TNL:
+			if (!(nlflag & 1))
+				break;
+			parseheredoc();
+			return n1;
+
+		case TEOF:
+			if (!n1 && (nlflag & 1))
+				n1 = NEOF;
+			parseheredoc();
+			return n1;
+		}
+
+		checkkwd = CHKNL | CHKKWD | CHKALIAS;
+		if (nlflag == 2 && tokendlist[peektoken()])
+			return n1;
+		nlflag |= 2;
+
 		n2 = andor();
 		tok = readtoken();
 		if (tok == TBACKGND) {
@@ -189,31 +199,15 @@ list(int nlflag)
 			n1 = n3;
 		}
 		switch (tok) {
+		case TNL:
+		case TEOF:
+			tokpushback++;
+			/* fall through */
 		case TBACKGND:
 		case TSEMI:
-			tok = readtoken();
-			/* fall through */
-		case TNL:
-			if (tok == TNL) {
-				parseheredoc();
-				if (nlflag == 1)
-					return n1;
-			} else {
-				tokpushback++;
-			}
-			checkkwd = CHKNL | CHKKWD | CHKALIAS;
-			if (tokendlist[peektoken()])
-				return n1;
 			break;
-		case TEOF:
-			if (heredoclist)
-				parseheredoc();
-			else
-				pungetc();		/* push back EOF on input */
-			tokpushback++;
-			return n1;
 		default:
-			if (nlflag == 1)
+			if ((nlflag & 1))
 				synexpect(-1);
 			tokpushback++;
 			return n1;
@@ -743,6 +737,19 @@ out:
 	return (t);
 }
 
+static void nlprompt(void)
+{
+	plinno++;
+	if (doprompt)
+		setprompt(2);
+}
+
+static void nlnoprompt(void)
+{
+	plinno++;
+	needprompt = doprompt;
+}
+
 
 /*
  * Read the next input token.
@@ -775,7 +782,7 @@ xxreadtoken(void)
 		setprompt(2);
 	}
 	for (;;) {	/* until token or start of word found */
-		c = pgetc_macro();
+		c = pgetc();
 		switch (c) {
 		case ' ': case '\t':
 		case PEOA:
@@ -786,16 +793,13 @@ xxreadtoken(void)
 			continue;
 		case '\\':
 			if (pgetc() == '\n') {
-				plinno++;
-				if (doprompt)
-					setprompt(2);
+				nlprompt();
 				continue;
 			}
 			pungetc();
 			goto breakloop;
 		case '\n':
-			plinno++;
-			needprompt = doprompt;
+			nlnoprompt();
 			RETURN(TNL);
 		case PEOF:
 			RETURN(TEOF);
@@ -825,6 +829,22 @@ xxreadtoken(void)
 breakloop:
 	return readtoken1(c, BASESYNTAX, (char *)NULL, 0);
 #undef RETURN
+}
+
+static int pgetc_eatbnl(void)
+{
+	int c;
+
+	while ((c = pgetc()) == '\\') {
+		if (pgetc() != '\n') {
+			pungetc();
+			break;
+		}
+
+		nlprompt();
+	}
+
+	return c;
 }
 
 
@@ -895,9 +915,7 @@ readtoken1(int firstc, char const *syntax, char *eofmark, int striptabs)
 				if (syntax == BASESYNTAX)
 					goto endword;	/* exit outer loop */
 				USTPUTC(c, out);
-				plinno++;
-				if (doprompt)
-					setprompt(2);
+				nlprompt();
 				c = pgetc();
 				goto loop;		/* continue outer loop */
 			case CWORD:
@@ -916,9 +934,7 @@ readtoken1(int firstc, char const *syntax, char *eofmark, int striptabs)
 					USTPUTC('\\', out);
 					pungetc();
 				} else if (c == '\n') {
-					plinno++;
-					if (doprompt)
-						setprompt(2);
+					nlprompt();
 				} else {
 					if (
 						dblquote &&
@@ -1009,7 +1025,7 @@ quotemark:
 					USTPUTC(c, out);
 				}
 			}
-			c = pgetc_macro();
+			c = pgetc();
 		}
 	}
 endword:
@@ -1074,8 +1090,7 @@ checkend: {
 
 		if (c == '\n' || c == PEOF) {
 			c = PEOF;
-			plinno++;
-			needprompt = doprompt;
+			nlnoprompt();
 		} else {
 			int len;
 
@@ -1179,7 +1194,7 @@ parsesub: {
 	char *p;
 	static const char types[] = "}-+?=";
 
-	c = pgetc();
+	c = pgetc_eatbnl();
 	if (
 		(checkkwd & CHKEOFMARK) ||
 		c <= PEOA  ||
@@ -1188,7 +1203,7 @@ parsesub: {
 		USTPUTC('$', out);
 		pungetc();
 	} else if (c == '(') {	/* $(command) or $((arith)) */
-		if (pgetc() == '(') {
+		if (pgetc_eatbnl() == '(') {
 			PARSEARITH();
 		} else {
 			pungetc();
@@ -1200,25 +1215,24 @@ parsesub: {
 		STADJUST(1, out);
 		subtype = VSNORMAL;
 		if (likely(c == '{')) {
-			c = pgetc();
+			c = pgetc_eatbnl();
 			subtype = 0;
 		}
 varname:
 		if (is_name(c)) {
 			do {
 				STPUTC(c, out);
-				c = pgetc();
+				c = pgetc_eatbnl();
 			} while (is_in_name(c));
 		} else if (is_digit(c)) {
 			do {
 				STPUTC(c, out);
-				c = pgetc();
+				c = pgetc_eatbnl();
 			} while (is_digit(c));
-		}
-		else if (is_special(c)) {
+		} else {
 			int cc = c;
 
-			c = pgetc();
+			c = pgetc_eatbnl();
 
 			if (!subtype && cc == '#') {
 				subtype = VSLENGTH;
@@ -1227,7 +1241,7 @@ varname:
 					goto varname;
 
 				cc = c;
-				c = pgetc();
+				c = pgetc_eatbnl();
 				if (cc == '}' || c != '}') {
 					pungetc();
 					subtype = 0;
@@ -1236,16 +1250,20 @@ varname:
 				}
 			}
 
+			if (!is_special(cc)) {
+				if (subtype == VSLENGTH)
+					subtype = 0;
+				goto badsub;
+			}
+
 			USTPUTC(cc, out);
 		}
-		else
-			goto badsub;
 
 		if (subtype == 0) {
 			switch (c) {
 			case ':':
 				subtype = VSNUL;
-				c = pgetc();
+				c = pgetc_eatbnl();
 				/*FALLTHROUGH*/
 			default:
 				p = strchr(types, c);
@@ -1259,7 +1277,7 @@ varname:
 					int cc = c;
 					subtype = c == '#' ? VSTRIMLEFT :
 							     VSTRIMRIGHT;
-					c = pgetc();
+					c = pgetc_eatbnl();
 					if (c == cc)
 						subtype++;
 					else
@@ -1324,9 +1342,7 @@ parsebackq: {
 
 			case '\\':
                                 if ((pc = pgetc()) == '\n') {
-					plinno++;
-					if (doprompt)
-						setprompt(2);
+					nlprompt();
 					/*
 					 * If eating a newline, avoid putting
 					 * the newline into the new character
@@ -1348,8 +1364,7 @@ parsebackq: {
 				synerror("EOF in backquote substitution");
 
 			case '\n':
-				plinno++;
-				needprompt = doprompt;
+				nlnoprompt();
 				break;
 
 			default:
@@ -1427,10 +1442,6 @@ parsearith: {
 
 #ifdef mkinit
 INCLUDE "parser.h"
-RESET {
-	tokpushback = 0;
-	checkkwd = 0;
-}
 #endif
 
 

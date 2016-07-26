@@ -385,7 +385,7 @@ is one of the redirection operators mentioned previously.
 Following is a list of the possible redirections.
 The
 .Bq n
-is an optional number, as in
+is an optional number between 0 and 9, as in
 .Sq 3
 (not
 .Sq Bq 3 ) ,
@@ -402,11 +402,13 @@ Append standard output (or n) to file.
 .It [n] Ns \*[Lt] file
 Redirect standard input (or n) from file.
 .It [n1] Ns \*[Lt]& Ns n2
-Duplicate standard input (or n1) from file descriptor n2.
+Copy file descriptor n2 as stdout (or fd n1).
+fd n2.
 .It [n] Ns \*[Lt]&-
 Close standard input (or n).
 .It [n1] Ns \*[Gt]& Ns n2
-Duplicate standard output (or n1) to n2.
+Copy file descriptor n2 as stdin (or fd n1).
+fd n2.
 .It [n] Ns \*[Gt]&-
 Close standard output (or n).
 .It [n] Ns \*[Lt]\*[Gt] file
@@ -596,7 +598,7 @@ semicolons, or ampersands, and optionally terminated by one of these three
 characters.
 The commands in a list are executed in the order they are written.
 If command is followed by an ampersand, the shell starts the
-command and immediately proceed onto the next command; otherwise it waits
+command and immediately proceeds onto the next command; otherwise it waits
 for the command to terminate before proceeding to the next one.
 .Ss Short-Circuit List Operators
 .Dq &&
@@ -1400,14 +1402,9 @@ By specifying a colon as the first character of
 .Va optstring
 all errors will be ignored.
 .Pp
-A nonzero value is returned when the last option is reached.
-If there are no remaining arguments,
+After the last option
 .Ic getopts
-will set
-.Va var
-to the special option,
-.Dq -- ,
-otherwise, it will set
+will return a non-zero value and set
 .Va var
 to
 .Dq \&? .

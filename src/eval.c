@@ -74,6 +74,7 @@ static int funcline;		/* starting line number of current function, or 0 if not i
 char *commandname;
 int exitstatus;			/* exit status of last command */
 int back_exitstatus;		/* exit status of backquoted command */
+int savestatus = -1;		/* exit status of last command outside traps */
 
 
 #if !defined(__alpha__) || (defined(__GNUC__) && __GNUC__ >= 3)
@@ -114,6 +115,10 @@ INCLUDE "eval.h"
 RESET {
 	evalskip = 0;
 	loopnest = 0;
+	if (savestatus >= 0) {
+		exitstatus = savestatus;
+		savestatus = -1;
+	}
 }
 #endif
 
@@ -160,6 +165,7 @@ evalstring(char *s, int flags)
 	struct stackmark smark;
 	int status;
 
+	s = sstrdup(s);
 	setinputstring(s);
 	setstackmark(&smark);
 
@@ -171,7 +177,9 @@ evalstring(char *s, int flags)
 		if (evalskip)
 			break;
 	}
+	popstackmark(&smark);
 	popfile();
+	stunalloc(s);
 
 	return status;
 }
@@ -194,6 +202,9 @@ evaltree(union node *n, int flags)
 		TRACE(("evaltree(NULL) called\n"));
 		goto out;
 	}
+
+	dotrap();
+
 #ifndef SMALL
 	displayhist = 1;	/* show history substitutions done with fc */
 #endif
@@ -305,8 +316,7 @@ out:
 	if (checkexit & exitstatus)
 		goto exexit;
 
-	if (pendingsigs)
-		dotrap();
+	dotrap();
 
 	if (flags & EV_EXIT) {
 exexit:
@@ -329,27 +339,45 @@ void evaltreenr(union node *n, int flags)
 #endif
 
 
+static int skiploop(void)
+{
+	int skip = evalskip;
+
+	switch (skip) {
+	case 0:
+		break;
+
+	case SKIPBREAK:
+	case SKIPCONT:
+		if (likely(--skipcount <= 0)) {
+			evalskip = 0;
+			break;
+		}
+
+		skip = SKIPBREAK;
+		break;
+	}
+
+	return skip;
+}
+
+
 STATIC void
 evalloop(union node *n, int flags)
 {
+	int skip;
 	int status;
 
 	loopnest++;
 	status = 0;
 	flags &= EV_TESTED;
-	for (;;) {
+	do {
 		int i;
 
 		evaltree(n->nbinary.ch1, EV_TESTED);
-		if (evalskip) {
-skipping:	  if (evalskip == SKIPCONT && --skipcount <= 0) {
-				evalskip = 0;
-				continue;
-			}
-			if (evalskip == SKIPBREAK && --skipcount <= 0)
-				evalskip = 0;
-			break;
-		}
+		skip = skiploop();
+		if (skip)
+			continue;
 		i = exitstatus;
 		if (n->type != NWHILE)
 			i = !i;
@@ -357,11 +385,11 @@ skipping:	  if (evalskip == SKIPCONT && --skipcount <= 0) {
 			break;
 		evaltree(n->nbinary.ch2, flags);
 		status = exitstatus;
-		if (evalskip)
-			goto skipping;
-	}
+		skip = skiploop();
+	} while (!(skip & ~SKIPCONT));
+	if (skip != SKIPFUNC)
+		exitstatus = status;
 	loopnest--;
-	exitstatus = status;
 }
 
 
@@ -382,9 +410,6 @@ evalfor(union node *n, int flags)
 	arglist.lastp = &arglist.list;
 	for (argp = n->nfor.args ; argp ; argp = argp->narg.next) {
 		expandarg(argp, &arglist, EXP_FULL | EXP_TILDE);
-		/* XXX */
-		if (evalskip)
-			goto out;
 	}
 	*arglist.lastp = NULL;
 
@@ -394,18 +419,10 @@ evalfor(union node *n, int flags)
 	for (sp = arglist.list ; sp ; sp = sp->next) {
 		setvar(n->nfor.var, sp->text, 0);
 		evaltree(n->nfor.body, flags);
-		if (evalskip) {
-			if (evalskip == SKIPCONT && --skipcount <= 0) {
-				evalskip = 0;
-				continue;
-			}
-			if (evalskip == SKIPBREAK && --skipcount <= 0)
-				evalskip = 0;
+		if (skiploop() & ~SKIPCONT)
 			break;
-		}
 	}
 	loopnest--;
-out:
 	popstackmark(&smark);
 }
 
@@ -848,21 +865,12 @@ bail:
 				listsetvar(varlist.list, VEXPORT);
 		}
 		if (evalbltin(cmdentry.u.cmd, argc, argv, flags)) {
-			int status;
-			int i;
-
-			i = exception;
-			if (i == EXEXIT)
-				goto raise;
-
-			status = (i == EXINT) ? SIGINT + 128 : 2;
-			exitstatus = status;
-
-			if (i == EXINT || spclbltin > 0) {
-raise:
-				longjmp(handler->loc, 1);
+			if (exception == EXERROR && spclbltin <= 0) {
+				FORCEINTON;
+				break;
 			}
-			FORCEINTON;
+raise:
+			longjmp(handler->loc, 1);
 		}
 		break;
 
@@ -927,9 +935,11 @@ evalfun(struct funcnode *func, int argc, char **argv, int flags)
 	struct jmploc jmploc;
 	int e;
 	int savefuncline;
+	int saveloopnest;
 
 	saveparam = shellparam;
 	savefuncline = funcline;
+	saveloopnest = loopnest;
 	savehandler = handler;
 	if ((e = setjmp(jmploc.loc))) {
 		goto funcdone;
@@ -939,6 +949,7 @@ evalfun(struct funcnode *func, int argc, char **argv, int flags)
 	shellparam.malloc = 0;
 	func->count++;
 	funcline = func->n.ndefun.linno;
+	loopnest = 0;
 	INTON;
 	shellparam.nparam = argc - 1;
 	shellparam.p = argv + 1;
@@ -949,13 +960,14 @@ evalfun(struct funcnode *func, int argc, char **argv, int flags)
 	poplocalvars(0);
 funcdone:
 	INTOFF;
+	loopnest = saveloopnest;
 	funcline = savefuncline;
 	freefunc(func);
 	freeparam(&shellparam);
 	shellparam = saveparam;
 	handler = savehandler;
 	INTON;
-	evalskip &= ~SKIPFUNC;
+	evalskip &= ~(SKIPFUNC | SKIPFUNCDEF);
 	return e;
 }
 
@@ -1035,12 +1047,23 @@ breakcmd(int argc, char **argv)
 int
 returncmd(int argc, char **argv)
 {
+	int skip;
+	int status;
+
 	/*
 	 * If called outside a function, do what ksh does;
 	 * skip the rest of the file.
 	 */
-	evalskip = SKIPFUNC;
-	return argv[1] ? number(argv[1]) : exitstatus;
+	if (argv[1]) {
+		skip = SKIPFUNC;
+		status = number(argv[1]);
+	} else {
+		skip = SKIPFUNCDEF;
+		status = exitstatus;
+	}
+	evalskip = skip;
+
+	return status;
 }
 
 

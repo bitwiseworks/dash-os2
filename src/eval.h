@@ -37,6 +37,7 @@
 extern char *commandname;	/* currently executing command */
 extern int exitstatus;		/* exit status of last command */
 extern int back_exitstatus;	/* exit status of backquoted command */
+extern int savestatus;		/* exit status of last command outside traps */
 
 
 struct backcmd {		/* result of evalbackcmd */
@@ -61,3 +62,4 @@ extern int evalskip;
 #define SKIPBREAK	(1 << 0)
 #define SKIPCONT	(1 << 1)
 #define SKIPFUNC	(1 << 2)
+#define SKIPFUNCDEF	(1 << 3)
