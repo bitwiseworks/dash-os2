@@ -60,10 +60,6 @@
 #include "exec.h"
 #include "cd.h"
 
-#ifdef HETIO
-#include "hetio.h"
-#endif
-
 #define PROFILE 0
 
 int rootpid;
@@ -206,10 +202,6 @@ cmdloop(int top)
 	int numeof = 0;
 
 	TRACE(("cmdloop(%d) called\n", top));
-#ifdef HETIO
-	if(iflag && top)
-		hetio_init();
-#endif
 	for (;;) {
 		int skip;
 
@@ -242,7 +234,7 @@ cmdloop(int top)
 
 		skip = evalskip;
 		if (skip) {
-			evalskip &= ~SKIPFUNC;
+			evalskip &= ~(SKIPFUNC | SKIPFUNCDEF);
 			break;
 		}
 	}
@@ -321,15 +313,19 @@ dotcmd(int argc, char **argv)
 {
 	int status = 0;
 
-	if (argc >= 2) {		/* That's what SVR2 does */
+	nextopt(nullstr);
+	argv = argptr;
+
+	if (*argv) {
 		char *fullname;
 
-		fullname = find_dot_file(argv[1]);
+		fullname = find_dot_file(*argv);
 		setinputfile(fullname, INPUT_PUSH_FILE);
 		commandname = fullname;
 		status = cmdloop(0);
 		popfile();
 	}
+
 	return status;
 }
 
@@ -339,8 +335,15 @@ exitcmd(int argc, char **argv)
 {
 	if (stoppedjobs())
 		return 0;
-	if (argc > 1)
-		exitstatus = number(argv[1]);
+
+	if (argc > 1) {
+		int status = number(argv[1]);
+
+		exitstatus = status;
+		if (savestatus >= 0)
+			savestatus = status;
+	}
+
 	exraise(EXEXIT);
 	/* NOTREACHED */
 }

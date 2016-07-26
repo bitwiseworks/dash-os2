@@ -51,10 +51,6 @@
 #include "trap.h"
 #include "mystring.h"
 
-#ifdef HETIO
-#include "hetio.h"
-#endif
-
 /*
  * Sigmode records the current value of the signal handlers for the various
  * modes.  A value of zero means that the current handler is not known.
@@ -314,25 +310,40 @@ void dotrap(void)
 	char *p;
 	char *q;
 	int i;
-	int savestatus;
+	int status, last_status;
 
-	savestatus = exitstatus;
+	if (!pendingsigs)
+		return;
+
+	status = savestatus;
+	last_status = status;
+	if (likely(status < 0)) {
+		status = exitstatus;
+		savestatus = status;
+	}
 	pendingsigs = 0;
 	barrier();
 
 	for (i = 0, q = gotsig; i < NSIG - 1; i++, q++) {
 		if (!*q)
 			continue;
+
+		if (evalskip) {
+			pendingsigs = i + 1;
+			break;
+		}
+
 		*q = 0;
 
 		p = trap[i + 1];
 		if (!p)
 			continue;
 		evalstring(p, 0);
-		exitstatus = savestatus;
-		if (evalskip)
-			break;
+		if (evalskip != SKIPFUNC)
+			exitstatus = status;
 	}
+
+	savestatus = last_status;
 }
 
 
@@ -366,18 +377,11 @@ exitshell(void)
 {
 	struct jmploc loc;
 	char *p;
-	volatile int status;
 
-#ifdef HETIO
-	hetio_reset_term();
-#endif
-	status = exitstatus;
-	TRACE(("pid %d, exitshell(%d)\n", getpid(), status));
-	if (setjmp(loc.loc)) {
-		if (exception == EXEXIT)
-			status = exitstatus;
+	savestatus = exitstatus;
+	TRACE(("pid %d, exitshell(%d)\n", getpid(), savestatus));
+	if (setjmp(loc.loc))
 		goto out;
-	}
 	handler = &loc;
 	if ((p = trap[0])) {
 		trap[0] = NULL;
@@ -392,7 +396,7 @@ out:
 	if (likely(!setjmp(loc.loc)))
 		setjobctl(0);
 	flushall();
-	_exit(status);
+	_exit(savestatus);
 	/* NOTREACHED */
 }
 
