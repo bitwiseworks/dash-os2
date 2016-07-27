@@ -38,6 +38,14 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#ifdef __OS2__
+#define INCL_DOS
+#include <os2.h>
+#define INCL_LOADEXCEPTQ
+#define INCL_FORKEXCEPTQ
+#include <exceptq.h>
+#endif
+
 
 #include "shell.h"
 #include "main.h"
@@ -93,6 +101,10 @@ main(int argc, char **argv)
 	struct jmploc jmploc;
 	struct stackmark smark;
 	int login;
+#ifdef __OS2__
+	EXCEPTIONREGISTRATIONRECORD xcptRegRec;
+	LoadExceptq(&xcptRegRec, "I", "dash " VERSION);
+#endif
 
 #ifdef __GLIBC__
 	dash_errno = __errno_location();
@@ -185,6 +197,9 @@ state4:	/* XXX ??? - why isn't this before the "if" statement */
 		extern void _mcleanup(void);
 		_mcleanup();
 	}
+#endif
+#ifdef __OS2__
+	UninstallExceptq(&xcptRegRec);
 #endif
 	exitshell();
 	/* NOTREACHED */
