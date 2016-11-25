@@ -699,7 +699,7 @@ check:
 
 	if (is_number(p)) {
 		num = atoi(p);
-		if (num <= njobs) {
+		if (num > 0 && num <= njobs) {
 			jp = jobtab + num - 1;
 			if (jp->used)
 				goto gotit;
@@ -714,9 +714,7 @@ check:
 	}
 
 	found = 0;
-	while (1) {
-		if (!jp)
-			goto err;
+	while (jp) {
 		if (match(jp->ps[0].cmd, p)) {
 			if (found)
 				goto err;
@@ -725,6 +723,10 @@ check:
 		}
 		jp = jp->prev_job;
 	}
+
+	if (!found)
+		goto err;
+	jp = found;
 
 gotit:
 #if JOBS
