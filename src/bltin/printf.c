@@ -175,17 +175,24 @@ pc:
 
 			/* skip to field width */
 			fmt += strspn(fmt, SKIP1);
-			if (*fmt == '*')
-				*param++ = getuintmax(1);
-
-			/* skip to possible '.', get following precision */
-			fmt += strspn(fmt, SKIP2);
-			if (*fmt == '.')
+			if (*fmt == '*') {
 				++fmt;
-			if (*fmt == '*')
 				*param++ = getuintmax(1);
+			} else {
+				/* skip to possible '.',
+				 * get following precision
+				 */
+				fmt += strspn(fmt, SKIP2);
+			}
 
-			fmt += strspn(fmt, SKIP2);
+			if (*fmt == '.') {
+				++fmt;
+				if (*fmt == '*') {
+					++fmt;
+					*param++ = getuintmax(1);
+				} else
+					fmt += strspn(fmt, SKIP2);
+			}
 
 			ch = *fmt;
 			if (!ch)
@@ -452,7 +459,7 @@ echocmd(int argc, char **argv)
 
 		if (likely(*argv))
 			nonl += print_escape_str("%s", NULL, NULL, *argv++);
-		if (nonl > 0)
+		if (likely((nonl + !*argv) > 1))
 			break;
 
 		c = *argv ? ' ' : '\n';
