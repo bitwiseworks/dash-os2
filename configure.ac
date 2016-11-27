@@ -84,6 +84,13 @@ AC_CHECK_DECL([PRIdMAX],,
 #include <inttypes.h>
 ])
 
+dnl Set system-specific linker options
+case `uname -s 2>/dev/null` in
+OS/2)
+	# Increase stack size to 8MB (1MB is not enough for big here docs)
+	export LDFLAGS="$LDFLAGS -Zstack 0x2000"
+esac
+
 dnl Checks for library functions.
 AC_CHECK_FUNCS(bsearch faccessat getpwnam getrlimit isalpha killpg \
 	       mempcpy \
