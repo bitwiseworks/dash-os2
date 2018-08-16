@@ -39,6 +39,12 @@
 #include <paths.h>
 #endif
 
+#ifdef __OS2__
+#define OS2EMX_PLAIN_CHAR
+#define INCL_DOSMISC
+#include <os2.h>
+#endif
+
 /*
  * Shell variables.
  */
@@ -90,29 +96,38 @@ MKINIT char defoptindvar[] = "OPTIND=1";
 int lineno;
 char linenovar[sizeof("LINENO=")+sizeof(int)*CHAR_BIT/3+1] = "LINENO=";
 
+#ifdef __OS2__
+STATIC char *changespecialvar(const char *);
+#endif
+
 /* Some macros in var.h depend on the order, add new variables to the end. */
 struct var varinit[] = {
 #if ATTY
-	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"ATTY\0",	0 },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"ATTY\0",	{ 0 } },
 #endif
 #ifdef IFS_BROKEN
-	{ 0,	VSTRFIXED|VTEXTFIXED,		defifsvar,	0 },
+	{ 0,	VSTRFIXED|VTEXTFIXED,		defifsvar,	{ 0 } },
 #else
-	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"IFS\0",	0 },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"IFS\0",	{ 0 } },
 #endif
-	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"MAIL\0",	changemail },
-	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"MAILPATH\0",	changemail },
-	{ 0,	VSTRFIXED|VTEXTFIXED|VPATHLIKE,	defpathvar,	changepath },
-	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS1=$ ",	0 },
-	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS2=> ",	0 },
-	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS4=+ ",	0 },
-	{ 0,	VSTRFIXED|VTEXTFIXED,		defoptindvar,	getoptsreset },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"MAIL\0",	{ changemail } },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"MAILPATH\0",	{ changemail } },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VPATHLIKE,	defpathvar,	{ changepath } },
+	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS1=$ ",	{ 0 } },
+	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS2=> ",	{ 0 } },
+	{ 0,	VSTRFIXED|VTEXTFIXED,		"PS4=+ ",	{ 0 } },
+	{ 0,	VSTRFIXED|VTEXTFIXED,		defoptindvar,	{ getoptsreset } },
 #ifdef WITH_LINENO
-	{ 0,	VSTRFIXED|VTEXTFIXED,		linenovar,	0 },
+	{ 0,	VSTRFIXED|VTEXTFIXED,		linenovar,	{ 0 } },
 #endif
 #ifndef SMALL
-	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"TERM\0",	0 },
-	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"HISTSIZE\0",	sethistsize },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"TERM\0",	{ 0 } },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET,	"HISTSIZE\0",	{ sethistsize } },
+#endif
+#ifdef __OS2__
+	{ 0,	VSTRFIXED|VTEXTFIXED|VPATHLIKE|VUNSET|VFUNC2,	"BEGINLIBPATH\0", { changespecialvar } },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VPATHLIKE|VUNSET|VFUNC2,	"ENDLIBPATH\0", { changespecialvar } },
+	{ 0,	VSTRFIXED|VTEXTFIXED|VUNSET|VFUNC2,	"LIBPATHSTRICT\0", { changespecialvar } },
 #endif
 };
 
@@ -138,6 +153,9 @@ INCLUDE "cd.h"
 INCLUDE "output.h"
 INCLUDE "var.h"
 MKINIT char **environ;
+#ifdef __OS2__
+MKINIT void initvar_os2(void);
+#endif
 INIT {
 	char **envp;
 	static char ppid[32] = "PPID=";
@@ -177,6 +195,9 @@ INIT {
 	else
 		setvar("PATHLIKE_VARS", NULL, VTEXTFIXED|VREADONLY);
 #endif
+#ifdef __OS2__
+	initvar_os2();
+#endif
 }
 
 RESET {
@@ -210,6 +231,35 @@ initvar(void)
 	if (!geteuid())
 		vps1.text = "PS1=# ";
 }
+
+#ifdef __OS2__
+static struct specialvar {
+	const char *name;
+	int code;
+} specialvars[] = {
+	{ "BEGINLIBPATH", BEGIN_LIBPATH },
+	{ "ENDLIBPATH", END_LIBPATH },
+	{ "LIBPATHSTRICT", LIBPATHSTRICT }
+};
+
+void
+initvar_os2(void)
+{
+	/* Import special variables */
+	char buf[1024];
+	APIRET arc;
+	size_t i;
+
+	for (i = 0; i < sizeof(specialvars)/sizeof(specialvars[0]); ++i) {
+		arc = DosQueryExtLIBPATH(buf, specialvars[i].code);
+		if (!arc && *buf) {
+			if (specialvars[i].code == LIBPATHSTRICT)
+				buf[1] = '\0';
+			setvar(specialvars[i].name, buf, VNOFUNC);
+		}
+	}
+}
+#endif
 
 /*
  * Set the value of a variable.  The flags argument is ored with the
@@ -295,8 +345,22 @@ struct var *setvareq(char *s, int flags)
 		if (flags & VNOSET)
 			goto out;
 
-		if (vp->func && (flags & VNOFUNC) == 0)
-			(*vp->func)(strchrnul(s, '=') + 1);
+		if (vp->func && (flags & VNOFUNC) == 0) {
+			if (vp->flags & VFUNC2) {
+				char *sn = (*vp->func2)(s);
+				if (sn) {
+					if (flags & VNOSAVE)
+						free(s);
+					flags |= VNOSAVE;
+					s = sn;
+				}
+			} else {
+				const char *n = strchrnul(s, '=');
+				if (*n == '=')
+					++n;
+				(*vp->func)(n);
+			}
+		}
 
 		if ((vp->flags & (VTEXTFIXED|VSTACK)) == 0)
 			ckfree(vp->text);
@@ -788,11 +852,7 @@ STATIC int ispathlike(const char *str, size_t len)
 		/* Well-known PATH-like variables. Note that PATH does not
 		   need to be on this list because it is pre-defined in varinit
 		   where it is already marked with VPATHLIKE. */
-		"TMPDIR,TMP,TEMP,CDPATH,HOME"
-#ifdef __OS2__
-	  	",BEGINLIBPATH,ENDLIBPATH"
-#endif
-		,
+		"TMPDIR,TMP,TEMP,CDPATH,HOME",
 		/* Additional variabes may be defined in the environment */
 		getenv("PATHLIKE_VARS")
 	};
@@ -812,5 +872,40 @@ STATIC int ispathlike(const char *str, size_t len)
 	}
 
 	return 0;
+}
+#endif
+
+#ifdef __OS2__
+char *
+changespecialvar(const char *s)
+{
+	char buf[1024];
+	APIRET arc;
+	size_t i, namelen, buflen;
+	char *sn = NULL;
+
+	namelen = strchrnul(s, '=') - s;
+	for (i = 0; i < sizeof(specialvars)/sizeof(specialvars[0]); ++i) {
+		if (strncmp(specialvars[i].name, s, namelen) == 0) {
+			/* Try to set what we got */
+			DosSetExtLIBPATH(s + namelen + 1, specialvars[i].code);
+			/* Fetch the real result and use it instead to emulate CMD.EXE behavior */
+			*buf = '\0';
+			arc = DosQueryExtLIBPATH(buf, specialvars[i].code);
+			if (!arc && specialvars[i].code == LIBPATHSTRICT && *buf)
+				buf[1] = '\0';
+			buflen = strlen(buf);
+      sn = ckmalloc(namelen + buflen + 2);
+      memcpy(sn, s, namelen);
+      sn[namelen] = '\0';
+      if (*buf) {
+        sn[namelen] = '=';
+        strcpy(sn + namelen + 1, buf);
+      }
+      break;
+		}
+	}
+
+	return sn;
 }
 #endif

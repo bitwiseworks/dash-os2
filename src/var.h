@@ -51,14 +51,21 @@
 #define VNOSET		0x80	/* do not set variable - just readonly test */
 #define VNOSAVE		0x100	/* when text is on the heap before setvareq */
 #define VPATHLIKE	0x1000	/* PATH-like variable */
+#define VFUNC2		0x2000	/* var function may change the value */
 
 struct var {
 	struct var *next;		/* next entry in hash list */
 	int flags;			/* flags are defined above */
 	const char *text;		/* name=value */
-	void (*func)(const char *);
-					/* function to be called when  */
-					/* the variable gets set/unset */
+	union {
+		void *dummy;
+		void (*func)(const char *);
+						/* function to be called when  */
+						/* the variable gets set/unset */
+		char *(*func2)(const char *);
+						/* function to be called when  */
+						/* the variable gets set/unset (may change the value) */
+	};
 };
 
 
