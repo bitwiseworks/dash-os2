@@ -708,8 +708,22 @@ poplocalvars(int keep)
 			vp->flags &= ~(VSTRFIXED|VREADONLY);
 			unsetvar(vp->text);
 		} else {
-			if (vp->func)
-				(*vp->func)(strchrnul(lvp->text, '=') + 1);
+			if (vp->func) {
+				if (vp->flags & VFUNC2) {
+					char *text = (*vp->func2)(lvp->text);
+					if (text) {
+						if ((lvp->flags & (VTEXTFIXED|VSTACK)) == 0)
+							ckfree(lvp->text);
+						lvp->flags &= ~(VTEXTFIXED|VSTACK);
+						lvp->text = text;
+					}
+				} else {
+					const char *n = strchrnul(lvp->text, '=');
+					if (*n == '=')
+						++n;
+					(*vp->func)(n);
+				}
+			}
 			if ((vp->flags & (VTEXTFIXED|VSTACK)) == 0)
 				ckfree(vp->text);
 			vp->flags = lvp->flags;
@@ -885,15 +899,41 @@ changespecialvar(const char *s)
 	char *sn = NULL;
 
 	namelen = strchrnul(s, '=') - s;
+	if (namelen == 0)
+		return sn;
+
 	for (i = 0; i < sizeof(specialvars)/sizeof(specialvars[0]); ++i) {
-		if (strncmp(specialvars[i].name, s, namelen) == 0) {
+		if (strlen(specialvars[i].name) == namelen &&
+				strncmp(specialvars[i].name, s, namelen) == 0) {
 			/* Try to set what we got */
-			DosSetExtLIBPATH(s + namelen + 1, specialvars[i].code);
+			const char *v = s + namelen;
+			if (*v == '=')
+				++v;
+			if (specialvars[i].code != LIBPATHSTRICT) {
+				/* Convert slashes to support ../ cases */
+				strncpy(buf, v, sizeof(buf) - 1);
+				buf[sizeof(buf) - 1] = '\0';
+				char *p = buf;
+				while (*p++)
+					if (*p == '/')
+						*p = '\\';
+				v = buf;
+			}
+			DosSetExtLIBPATH(v, specialvars[i].code);
 			/* Fetch the real result and use it instead to emulate CMD.EXE behavior */
 			*buf = '\0';
 			arc = DosQueryExtLIBPATH(buf, specialvars[i].code);
-			if (!arc && specialvars[i].code == LIBPATHSTRICT && *buf)
-				buf[1] = '\0';
+			if (!arc && *buf) {
+				if (specialvars[i].code == LIBPATHSTRICT)
+					buf[1] = '\0';
+				else {
+					/* Convert separators back */
+					char *p = buf;
+					while (*p++)
+						if (*p == '\\')
+							*p = '/';
+				}
+			}
 			buflen = strlen(buf);
       sn = ckmalloc(namelen + buflen + 2);
       memcpy(sn, s, namelen);
