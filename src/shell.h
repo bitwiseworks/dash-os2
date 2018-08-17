@@ -79,7 +79,7 @@
     (((*(path) >= 'A' && *(path) <= 'Z') || \
       (*(path) >= 'a' && *(path) <= 'z')) && (path)[1] == ':')
 #define PATH_IS_DRIVE_ROOT(path) \
-    (PATH_IS_DRIVE(path) && path[2]=='\0' || PATH_IS_SLASH((path)[2]))
+    (PATH_IS_DRIVE(path) && ((path)[2]=='\0' || PATH_IS_SLASH((path)[2])))
 #ifdef __KLIBC__
 #define PATH_IS_REWRITE(path) (__libc_PathRewrite((path), NULL, 0) > 0)
 #else
