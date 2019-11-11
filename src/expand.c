@@ -45,7 +45,9 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <string.h>
+#ifdef HAVE_FNMATCH
 #include <fnmatch.h>
+#endif
 #ifdef HAVE_GLOB
 #include <glob.h>
 #endif
@@ -83,7 +85,7 @@
 #define RMESCAPE_HEAP	0x10	/* Malloc strings instead of stalloc */
 
 /* Add CTLESC when necessary. */
-#define QUOTES_ESC	(EXP_FULL | EXP_CASE | EXP_QPAT)
+#define QUOTES_ESC	(EXP_FULL | EXP_CASE)
 /* Do not skip NUL characters. */
 #define QUOTES_KEEPNUL	EXP_TILDE
 
@@ -117,12 +119,12 @@ STATIC const char *subevalvar(char *, char *, int, int, int, int, int);
 STATIC char *evalvar(char *, int);
 STATIC size_t strtodest(const char *, const char *, int);
 STATIC void memtodest(const char *, size_t, const char *, int);
-STATIC ssize_t varvalue(char *, int, int, int *);
+STATIC ssize_t varvalue(char *, int, int, int);
 STATIC void expandmeta(struct strlist *, int);
 #ifdef HAVE_GLOB
 STATIC void addglob(const glob_t *);
 #else
-STATIC void expmeta(char *, char *);
+STATIC void expmeta(char *, unsigned, unsigned);
 STATIC struct strlist *expsort(struct strlist *);
 STATIC struct strlist *msort(struct strlist *, int);
 #endif
@@ -316,13 +318,13 @@ start:
 		case CTLENDVAR: /* ??? */
 			goto breakloop;
 		case CTLQUOTEMARK:
-			inquotes ^= EXP_QUOTED;
 			/* "$@" syntax adherence hack */
-			if (inquotes && !memcmp(p, dolatstr + 1,
-						DOLATSTRLEN - 1)) {
-				p = evalvar(p + 1, flag | inquotes) + 1;
+			if (!inquotes && !memcmp(p, dolatstr + 1,
+						 DOLATSTRLEN - 1)) {
+				p = evalvar(p + 1, flag | EXP_QUOTED) + 1;
 				goto start;
 			}
+			inquotes ^= EXP_QUOTED;
 addquote:
 			if (flag & QUOTES_ESC) {
 				p--;
@@ -333,16 +335,6 @@ addquote:
 		case CTLESC:
 			startloc++;
 			length++;
-
-			/*
-			 * Quoted parameter expansion pattern: remove quote
-			 * unless inside inner quotes or we have a literal
-			 * backslash.
-			 */
-			if (((flag | inquotes) & (EXP_QPAT | EXP_QUOTED)) ==
-			    EXP_QPAT && *p != '\\')
-				break;
-
 			goto addquote;
 		case CTLVAR:
 			p = evalvar(p, flag | inquotes);
@@ -651,8 +643,7 @@ subevalvar(char *p, char *str, int strloc, int subtype, int startloc, int varfla
 	char *(*scan)(char *, char *, char *, char *, int , int);
 
 	argstr(p, EXP_TILDE | (subtype != VSASSIGN && subtype != VSQUESTION ?
-			       (flag & (EXP_QUOTED | EXP_QPAT) ?
-			        EXP_QPAT : EXP_CASE) : 0));
+			       EXP_CASE : 0));
 	STPUTC('\0', expdest);
 	argbackq = saveargbackq;
 	startp = stackblock() + startloc;
@@ -721,7 +712,6 @@ evalvar(char *p, int flag)
 	int c;
 	int startloc;
 	ssize_t varlen;
-	int easy;
 	int quoted;
 
 	varflags = *p++;
@@ -732,12 +722,11 @@ evalvar(char *p, int flag)
 
 	quoted = flag & EXP_QUOTED;
 	var = p;
-	easy = (!quoted || (*var == '@' && shellparam.nparam));
 	startloc = expdest - (char *)stackblock();
 	p = strchr(p, '=') + 1;
 
 again:
-	varlen = varvalue(var, varflags, flag, &quoted);
+	varlen = varvalue(var, varflags, flag, quoted);
 	if (varflags & VSNUL)
 		varlen--;
 
@@ -780,8 +769,11 @@ vsplus:
 
 	if (subtype == VSNORMAL) {
 record:
-		if (!easy)
-			goto end;
+		if (quoted) {
+			quoted = *var == '@' && shellparam.nparam;
+			if (!quoted)
+				goto end;
+		}
 		recordregion(startloc, expdest - (char *)stackblock(), quoted);
 		goto end;
 	}
@@ -857,8 +849,7 @@ memtodest(const char *p, size_t len, const char *syntax, int quotes) {
 		if (c) {
 			if ((quotes & QUOTES_ESC) &&
 			    ((syntax[c] == CCTL) ||
-			     (((quotes & EXP_FULL) || syntax != BASESYNTAX) &&
-			      syntax[c] == CBACK)))
+			     (syntax != BASESYNTAX && syntax[c] == CBACK)))
 				USTPUTC(CTLESC, q);
 		} else if (!(quotes & QUOTES_KEEPNUL))
 			continue;
@@ -887,7 +878,7 @@ strtodest(p, syntax, quotes)
  */
 
 STATIC ssize_t
-varvalue(char *name, int varflags, int flags, int *quotedp)
+varvalue(char *name, int varflags, int flags, int quoted)
 {
 	int num;
 	char *p;
@@ -896,11 +887,11 @@ varvalue(char *name, int varflags, int flags, int *quotedp)
 	char sepc;
 	char **ap;
 	char const *syntax;
-	int quoted = *quotedp;
 	int subtype = varflags & VSTYPE;
 	int discard = subtype == VSPLUS || subtype == VSLENGTH;
 	int quotes = (discard ? 0 : (flags & QUOTES_ESC)) | QUOTES_KEEPNUL;
 	ssize_t len = 0;
+	char c;
 
 	sep = (flags & EXP_FULL) << CHAR_BIT;
 	syntax = quoted ? DQSYNTAX : BASESYNTAX;
@@ -925,7 +916,7 @@ numvar:
 	case '-':
 		p = makestrspace(NOPTS, expdest);
 		for (i = NOPTS - 1; i >= 0; i--) {
-			if (optlist[i]) {
+			if (optlist[i] && optletters[i]) {
 				USTPUTC(optletters[i], p);
 				len++;
 			}
@@ -937,12 +928,25 @@ numvar:
 			goto param;
 		/* fall through */
 	case '*':
-		if (quoted)
-			sep = 0;
-		sep |= ifsset() ? ifsval()[0] : ' ';
+		/* We will set c to 0 or ~0 depending on whether
+		 * we're doing field splitting.  We won't do field
+		 * splitting if either we're quoted or sep is zero.
+		 *
+		 * Instead of testing (quoted || !sep) the following
+		 * trick optimises away any branches by using the
+		 * fact that EXP_QUOTED (which is the only bit that
+		 * can be set in quoted) is the same as EXP_FULL <<
+		 * CHAR_BIT (which is the only bit that can be set
+		 * in sep).
+		 */
+#if EXP_QUOTED >> CHAR_BIT != EXP_FULL
+#error The following two lines expect EXP_QUOTED == EXP_FULL << CHAR_BIT
+#endif
+		c = !((quoted | ~sep) & EXP_QUOTED) - 1;
+		sep &= ~quoted;
+		sep |= ifsset() ? (unsigned char)(c & ifsval()[0]) : ' ';
 param:
 		sepc = sep;
-		*quotedp = !sepc;
 		if (!(ap = shellparam.p))
 			return -1;
 		while ((p = *ap++)) {
@@ -1041,7 +1045,10 @@ ifsbreakup(char *string, int maxargs, struct arglist *arglist)
 		realifs = ifsset() ? ifsval() : defifs;
 		ifsp = &ifsfirst;
 		do {
+			int afternul;
+
 			p = string + ifsp->begoff;
+			afternul = nulonly;
 			nulonly = ifsp->nulonly;
 			ifs = nulonly ? nullstr : realifs;
 			ifsspc = 0;
@@ -1106,7 +1113,7 @@ ifsbreakup(char *string, int maxargs, struct arglist *arglist)
 				}
 
 				if (isifs) {
-					if (!nulonly)
+					if (!(afternul || nulonly))
 						ifsspc = isdefifs;
 					/* Ignore IFS whitespace at start */
 					if (q == start && ifsspc) {
@@ -1197,7 +1204,8 @@ expandmeta(str, flag)
 			ckfree(p);
 		switch (i) {
 		case 0:
-			if (!(pglob.gl_flags & GLOB_MAGCHAR))
+			if ((pglob.gl_flags & (GLOB_NOMAGIC | GLOB_NOCHECK)) ==
+			    (GLOB_NOMAGIC | GLOB_NOCHECK))
 				goto nometa2;
 			addglob(&pglob);
 			globfree(&pglob);
@@ -1238,6 +1246,7 @@ addglob(pglob)
 
 #else	/* HAVE_GLOB */
 STATIC char *expdir;
+STATIC unsigned expdir_max;
 
 
 STATIC void
@@ -1252,6 +1261,7 @@ expandmeta(struct strlist *str, int flag)
 		struct strlist **savelastp;
 		struct strlist *sp;
 		char *p;
+		unsigned len;
 
 		if (fflag)
 			goto nometa;
@@ -1261,12 +1271,11 @@ expandmeta(struct strlist *str, int flag)
 
 		INTOFF;
 		p = preglob(str->text, RMESCAPE_ALLOC | RMESCAPE_HEAP);
-		{
-			int i = strlen(str->text);
-			expdir = ckmalloc(i < 2048 ? 2048 : i); /* XXX */
-		}
+		len = strlen(p);
+		expdir_max = len + PATH_MAX;
+		expdir = ckmalloc(expdir_max);
 
-		expmeta(expdir, p);
+		expmeta(p, len, 0);
 		ckfree(expdir);
 		if (p != str->text)
 			ckfree(p);
@@ -1296,8 +1305,9 @@ nometa:
  */
 
 STATIC void
-expmeta(char *enddir, char *name)
+expmeta(char *name, unsigned name_len, unsigned expdir_len)
 {
+	char *enddir = expdir + expdir_len;
 	char *p;
 	const char *cp;
 	char *start;
@@ -1330,7 +1340,7 @@ expmeta(char *enddir, char *name)
 				}
 			}
 		} else {
-			if (*p == '\\')
+			if (*p == '\\' && p[1])
 				esc++;
 			if (p[esc] == '/') {
 				if (metaflag)
@@ -1340,15 +1350,15 @@ expmeta(char *enddir, char *name)
 		}
 	}
 	if (metaflag == 0) {	/* we've reached the end of the file name */
-		if (enddir != expdir)
-			metaflag++;
+		if (!expdir_len)
+			return;
 		p = name;
 		do {
-			if (*p == '\\')
+			if (*p == '\\' && p[1])
 				p++;
 			*enddir++ = *p;
 		} while (*p++);
-		if (metaflag == 0 || lstat64(expdir, &statb) >= 0)
+		if (lstat64(expdir, &statb) >= 0)
 			addfname(expdir);
 		return;
 	}
@@ -1356,23 +1366,18 @@ expmeta(char *enddir, char *name)
 	if (name < start) {
 		p = name;
 		do {
-			if (*p == '\\')
+			if (*p == '\\' && p[1])
 				p++;
 			*enddir++ = *p++;
 		} while (p < start);
 	}
-	if (enddir == expdir) {
+	*enddir = 0;
+	cp = expdir;
+	expdir_len = enddir - cp;
+	if (!expdir_len)
 		cp = ".";
-	} else if (enddir == expdir + 1 && *expdir == '/') {
-		cp = "/";
-	} else {
-		cp = expdir;
-		enddir[-1] = '\0';
-	}
 	if ((dirp = opendir(cp)) == NULL)
 		return;
-	if (enddir != expdir)
-		enddir[-1] = '/';
 	if (*endname == 0) {
 		atend = 1;
 	} else {
@@ -1380,6 +1385,7 @@ expmeta(char *enddir, char *name)
 		*endname = '\0';
 		endname += esc + 1;
 	}
+	name_len -= endname - name;
 	matchdot = 0;
 	p = start;
 	if (*p == '\\')
@@ -1394,11 +1400,22 @@ expmeta(char *enddir, char *name)
 				scopy(dp->d_name, enddir);
 				addfname(expdir);
 			} else {
-				for (p = enddir, cp = dp->d_name;
-				     (*p++ = *cp++) != '\0';)
-					continue;
-				p[-1] = '/';
-				expmeta(p, endname);
+				unsigned offset;
+				unsigned len;
+
+				p = stpcpy(enddir, dp->d_name);
+				*p = '/';
+
+				offset = p - expdir + 1;
+				len = offset + name_len + NAME_MAX;
+				if (len > expdir_max) {
+					len += PATH_MAX;
+					expdir = ckrealloc(expdir, len);
+					expdir_max = len;
+				}
+
+				expmeta(endname, name_len, offset);
+				enddir = expdir + expdir_len;
 			}
 		}
 	}
@@ -1644,7 +1661,6 @@ char *
 _rmescapes(char *str, int flag)
 {
 	char *p, *q, *r;
-	unsigned inquotes;
 	int notescaped;
 	int globbing;
 
@@ -1674,24 +1690,23 @@ _rmescapes(char *str, int flag)
 			q = mempcpy(q, str, len);
 		}
 	}
-	inquotes = 0;
 	globbing = flag & RMESCAPE_GLOB;
 	notescaped = globbing;
 	while (*p) {
 		if (*p == (char)CTLQUOTEMARK) {
-			inquotes = ~inquotes;
 			p++;
 			notescaped = globbing;
 			continue;
+		}
+		if (*p == '\\') {
+			/* naked back slash */
+			notescaped = 0;
+			goto copy;
 		}
 		if (*p == (char)CTLESC) {
 			p++;
 			if (notescaped)
 				*q++ = '\\';
-		} else if (*p == '\\' && !inquotes) {
-			/* naked back slash */
-			notescaped = 0;
-			goto copy;
 		}
 		notescaped = globbing;
 copy:

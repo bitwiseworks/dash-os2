@@ -694,6 +694,7 @@ evalcommand(union node *cmd, int flags)
 #endif
 {
 	struct localvar_list *localvar_stop;
+	struct parsefile *file_stop;
 	struct redirtab *redir_stop;
 	struct stackmark smark;
 	union node *argp;
@@ -722,6 +723,7 @@ evalcommand(union node *cmd, int flags)
 	TRACE(("evalcommand(0x%lx, %d) called\n", (long)cmd, flags));
 	setstackmark(&smark);
 	localvar_stop = pushlocalvars();
+	file_stop = parsefile;
 	back_exitstatus = 0;
 
 	cmdentry.cmdtype = CMDBUILTIN;
@@ -848,6 +850,8 @@ bail:
 		goto out;
 	}
 
+	jp = NULL;
+
 	/* Execute the command. */
 	switch (cmdentry.cmdtype) {
 	default:
@@ -855,11 +859,8 @@ bail:
 		if (!(flags & EV_EXIT) || have_traps()) {
 			INTOFF;
 			jp = makejob(cmd, 1);
-			if (forkshell(jp, cmd, FORK_FG) != 0) {
-				status = waitforjob(jp);
-				INTON;
+			if (forkshell(jp, cmd, FORK_FG) != 0)
 				break;
-			}
 			FORCEINTON;
 		}
 		listsetvar(varlist.list, VEXPORT|VSTACK);
@@ -872,29 +873,27 @@ bail:
 			if (execcmd && argc > 1)
 				listsetvar(varlist.list, VEXPORT);
 		}
-		if (evalbltin(cmdentry.u.cmd, argc, argv, flags)) {
-			if (exception == EXERROR && spclbltin <= 0) {
-				FORCEINTON;
-				goto readstatus;
-			}
+		if (evalbltin(cmdentry.u.cmd, argc, argv, flags) &&
+		    !(exception == EXERROR && spclbltin <= 0)) {
 raise:
 			longjmp(handler->loc, 1);
 		}
-		goto readstatus;
+		break;
 
 	case CMDFUNCTION:
-		poplocalvars(1);
 		if (evalfun(cmdentry.u.func, argc, argv, flags))
 			goto raise;
-readstatus:
-		status = exitstatus;
 		break;
 	}
+
+	status = waitforjob(jp);
+	FORCEINTON;
 
 out:
 	if (cmd->ncmd.redirect)
 		popredir(execcmd);
 	unwindredir(redir_stop);
+	unwindfiles(file_stop);
 	unwindlocalvars(localvar_stop);
 	if (lastarg)
 		/* dsl: I think this is intended to be used to support
@@ -967,9 +966,7 @@ evalfun(struct funcnode *func, int argc, char **argv, int flags)
 	shellparam.p = argv + 1;
 	shellparam.optind = 1;
 	shellparam.optoff = -1;
-	pushlocalvars();
 	evaltree(func->n.ndefun.body, flags & EV_TESTED);
-	poplocalvars(0);
 funcdone:
 	INTOFF;
 	loopnest = saveloopnest;
