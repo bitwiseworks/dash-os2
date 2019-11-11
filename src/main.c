@@ -150,7 +150,11 @@ main(int argc, char **argv)
 	login = procargs(argc, argv);
 	if (login) {
 		state = 1;
+#ifdef __OS2__
+		read_profile("/@unixroot/etc/profile");
+#else
 		read_profile("/etc/profile");
+#endif
 state1:
 		state = 2;
 		read_profile("$HOME/.profile");
