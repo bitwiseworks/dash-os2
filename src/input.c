@@ -147,8 +147,12 @@ retry:
 		static const char *rl_cp;
 		static int el_len;
 
-		if (rl_cp == NULL)
+		if (rl_cp == NULL) {
+			struct stackmark smark;
+			pushstackmark(&smark, stackblocksize());
 			rl_cp = el_gets(el, &el_len);
+			popstackmark(&smark);
+		}
 		if (rl_cp == NULL)
 			nr = 0;
 		else {
@@ -475,6 +479,13 @@ popfile(void)
 }
 
 
+void unwindfiles(struct parsefile *stop)
+{
+	while (parsefile != stop)
+		popfile();
+}
+
+
 /*
  * Return to top level.
  */
@@ -482,8 +493,7 @@ popfile(void)
 void
 popallfiles(void)
 {
-	while (parsefile != &basepf)
-		popfile();
+	unwindfiles(&basepf);
 }
 
 

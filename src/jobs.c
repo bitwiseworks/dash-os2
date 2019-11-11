@@ -53,6 +53,7 @@
 #include <termios.h>
 #undef CEOF			/* syntax.h redefines this */
 #endif
+#include "eval.h"
 #include "redir.h"
 #include "show.h"
 #include "main.h"
@@ -648,7 +649,7 @@ out:
 	return retval;
 
 sigout:
-	retval = 128 + pendingsigs;
+	retval = 128 + pending_sig;
 	goto out;
 }
 
@@ -974,10 +975,18 @@ waitforjob(struct job *jp)
 {
 	int st;
 
-	TRACE(("waitforjob(%%%d) called\n", jobno(jp)));
-	while (jp->state == JOBRUNNING) {
-		dowait(DOWAIT_BLOCK, jp);
+	TRACE(("waitforjob(%%%d) called\n", jp ? jobno(jp) : 0));
+	if (!jp) {
+		int pid = gotsigchld;
+
+		while (pid > 0)
+			pid = dowait(DOWAIT_NORMAL, NULL);
+
+		return exitstatus;
 	}
+
+	while (jp->state == JOBRUNNING)
+		dowait(DOWAIT_BLOCK, jp);
 	st = getstatus(jp);
 #if JOBS
 	if (jp->jobctl) {
@@ -1148,7 +1157,7 @@ waitproc(int block, int *status)
 		sigfillset(&mask);
 		sigprocmask(SIG_SETMASK, &mask, &oldmask);
 
-		while (!gotsigchld && !pendingsigs)
+		while (!gotsigchld && !pending_sig)
 			sigsuspend(&oldmask);
 
 		sigclearmask();
